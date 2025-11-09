@@ -1,11 +1,18 @@
 pipeline {
-    agent any
+    agent {
+        docker {
+            image 'maven:3.9-eclipse-temurin-21'
+            args '-v /var/run/docker.sock:/var/run/docker.sock'
+        }
+    }
+
     environment {
         DOCKER_REGISTRY = 'docker.io'
         DOCKER_IMAGE_NAME = 'silvestor/petclinic'
         DOCKER_IMAGE_TAG = "${BUILD_NUMBER}"
         GITHUB_REPO = 'https://github.com/slysiele/spring-petclinic.git'
     }
+
     stages {
         stage('Checkout') {
             steps {
@@ -14,18 +21,21 @@ pipeline {
                 sh 'ls -la'
             }
         }
+
         stage('Build') {
             steps {
                 echo '========== BUILD =========='
                 sh 'mvn clean package -DskipTests'
             }
         }
+
         stage('Test') {
             steps {
                 echo '========== UNIT TESTS =========='
                 sh 'mvn test'
             }
         }
+
         stage('Build Docker Image') {
             steps {
                 echo '========== DOCKER BUILD =========='
@@ -35,6 +45,7 @@ pipeline {
                 '''
             }
         }
+
         stage('Push to Docker Hub') {
             steps {
                 echo '========== DOCKER PUSH =========='
@@ -49,32 +60,27 @@ pipeline {
                 }
             }
         }
+
         stage('Deploy to Kubernetes') {
             steps {
                 echo '========== KUBERNETES DEPLOY =========='
                 sh '''
-                    # Create namespace if not exists
                     kubectl create namespace petclinic --dry-run=client -o yaml | kubectl apply -f -
-                    
-                    # Update image tag in deployment
                     sed -i "s|silvestor/petclinic:.*|silvestor/petclinic:${DOCKER_IMAGE_TAG}|g" k8s/deployment.yaml
-                    
-                    # Apply manifests
                     kubectl apply -f k8s/deployment.yaml
                     kubectl apply -f k8s/service.yaml
-                    
-                    # Wait for rollout
                     kubectl rollout status deployment/petclinic -n petclinic --timeout=5m
                 '''
             }
         }
     }
+
     post {
         success {
-            echo ' Pipeline succeeded!'
+            echo '✓ Pipeline succeeded!'
         }
         failure {
-            echo ' Pipeline failed!'
+            echo '✗ Pipeline failed!'
         }
     }
 }
