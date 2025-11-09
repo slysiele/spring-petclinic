@@ -1,31 +1,29 @@
 # =========================
 # Build Stage
 # =========================
-FROM eclipse-temurin:25-jdk-alpine AS builder
+FROM maven:3.9-eclipse-temurin-21 as builder
 
 # Set work directory
 WORKDIR /app
 
 # Copy Maven wrapper and project files
-COPY .mvn/ .mvn/
-COPY mvnw pom.xml ./
-COPY src ./src
+COPY . .
 
 # Ensure mvnw has execute permission
 RUN chmod +x mvnw
 
 # Build the project (skip tests for faster build)
-RUN ./mvnw clean package
+RUN ./mvnw clean package -DskipTests
 
 # =========================
 # Runtime Stage
 # =========================
-FROM eclipse-temurin:25-jdk-alpine
+FROM eclipse-temurin:21-jre
 
 WORKDIR /app
 
 # Copy the packaged jar from the builder stage
-COPY --from=builder /app/target/*.jar app.jar
+COPY --from=builder /app/target/spring-petclinic-*.jar app.jar
 
 EXPOSE 8080
 
