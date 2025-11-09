@@ -1,13 +1,7 @@
 pipeline {
-    agent {
-        docker {
-            image 'maven:3.9-eclipse-temurin-21'
-            args '-v /var/run/docker.sock:/var/run/docker.sock'
-        }
-    }
+    agent any
 
     environment {
-        DOCKER_REGISTRY = 'docker.io'
         DOCKER_IMAGE_NAME = 'silvestor/petclinic'
         DOCKER_IMAGE_TAG = "${BUILD_NUMBER}"
         GITHUB_REPO = 'https://github.com/slysiele/spring-petclinic.git'
@@ -25,14 +19,14 @@ pipeline {
         stage('Build') {
             steps {
                 echo '========== BUILD =========='
-                sh 'mvn clean package -DskipTests'
+                sh './mvnw clean package -DskipTests'
             }
         }
 
         stage('Test') {
             steps {
                 echo '========== UNIT TESTS =========='
-                sh 'mvn test'
+                sh './mvnw test'
             }
         }
 
@@ -49,8 +43,7 @@ pipeline {
         stage('Push to Docker Hub') {
             steps {
                 echo '========== DOCKER PUSH =========='
-                withCredentials([usernamePassword(credentialsId: 'docker-hub-creds',
-                        usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                withCredentials([usernamePassword(credentialsId: 'docker-hub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
                     sh '''
                         echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
                         docker push ${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}
