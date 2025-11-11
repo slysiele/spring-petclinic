@@ -24,24 +24,24 @@ pipeline {
 
         stage('Build Docker Image') {
             steps {
-                echo '========== DOCKER BUILD =========='
-                sh '''
-                    docker build -t ${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG} .
-                    docker tag ${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG} ${DOCKER_IMAGE_NAME}:latest
-                '''
+                echo '========== BUILD CONTAINER IMAGE =========='
+                sh """
+                    nerdctl build -t ${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG} .
+                    nerdctl tag ${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG} ${DOCKER_IMAGE_NAME}:latest
+                """
             }
         }
 
         stage('Push to Docker Hub') {
             steps {
-                echo '========== DOCKER PUSH =========='
+                echo '========== PUSH IMAGE =========='
                 withCredentials([usernamePassword(credentialsId: 'docker-hub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
-                    sh '''
-                        echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
-                        docker push ${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}
-                        docker push ${DOCKER_IMAGE_NAME}:latest
-                        docker logout
-                    '''
+                    sh """
+                        echo "$DOCKER_PASS" | nerdctl login -u "$DOCKER_USER" --password-stdin
+                        nerdctl push ${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}
+                        nerdctl push ${DOCKER_IMAGE_NAME}:latest
+                        nerdctl logout
+                    """
                 }
             }
         }
@@ -49,13 +49,13 @@ pipeline {
         stage('Deploy to Kubernetes') {
             steps {
                 echo '========== KUBERNETES DEPLOY =========='
-                sh '''
+                sh """
                     kubectl create namespace petclinic --dry-run=client -o yaml | kubectl apply -f -
                     sed -i "s|silvestor/petclinic:.*|silvestor/petclinic:${DOCKER_IMAGE_TAG}|g" k8s/deployment.yaml
                     kubectl apply -f k8s/deployment.yaml
                     kubectl apply -f k8s/service.yaml
                     kubectl rollout status deployment/petclinic -n petclinic --timeout=5m
-                '''
+                """
             }
         }
     }
