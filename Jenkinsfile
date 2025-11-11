@@ -1,12 +1,10 @@
 pipeline {
     agent any
-
     environment {
         DOCKER_IMAGE_NAME = 'silvestor/petclinic'
         DOCKER_IMAGE_TAG = "${BUILD_NUMBER}"
         GITHUB_REPO = 'https://github.com/slysiele/spring-petclinic.git'
     }
-
     stages {
         stage('Checkout') {
             steps {
@@ -14,38 +12,34 @@ pipeline {
                 git branch: 'main', url: "${GITHUB_REPO}"
             }
         }
-
         stage('Build') {
             steps {
                 echo '========== BUILD =========='
                 sh './mvnw clean package -DskipTests -Denforcer.skip=true'
             }
         }
-
         stage('Build Docker Image') {
             steps {
                 echo '========== DOCKER BUILD =========='
                 sh '''
-                    sudo docker build -t ${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG} .
-                    sudo docker tag ${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG} ${DOCKER_IMAGE_NAME}:latest
+                    docker build -t ${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG} .
+                    docker tag ${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG} ${DOCKER_IMAGE_NAME}:latest
                 '''
             }
         }
-
         stage('Push to Docker Hub') {
             steps {
                 echo '========== DOCKER PUSH =========='
                 withCredentials([usernamePassword(credentialsId: 'docker-hub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
                     sh '''
-                        echo $DOCKER_PASS | sudo docker login -u $DOCKER_USER --password-stdin
-                        sudo docker push ${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}
-                        sudo docker push ${DOCKER_IMAGE_NAME}:latest
-                        sudo docker logout
+                        echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
+                        docker push ${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}
+                        docker push ${DOCKER_IMAGE_NAME}:latest
+                        docker logout
                     '''
                 }
             }
         }
-
         stage('Deploy to Kubernetes') {
             steps {
                 echo '========== KUBERNETES DEPLOY =========='
@@ -59,7 +53,6 @@ pipeline {
             }
         }
     }
-
     post {
         success {
             echo '✓ Pipeline succeeded!'
