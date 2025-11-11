@@ -11,6 +11,7 @@ pipeline {
         stage('Checkout') {
             steps {
                 echo '========== CHECKOUT =========='
+                cleanWs()
                 git branch: 'main', url: "${GITHUB_REPO}"
             }
         }
