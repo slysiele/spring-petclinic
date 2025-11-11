@@ -26,8 +26,8 @@ pipeline {
             steps {
                 echo '========== DOCKER BUILD =========='
                 sh '''
-                    sudo docker build -t ${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG} .
-                    sudo docker tag ${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG} ${DOCKER_IMAGE_NAME}:latest
+                    docker build -t ${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG} .
+                    docker tag ${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG} ${DOCKER_IMAGE_NAME}:latest
                 '''
             }
         }
@@ -37,10 +37,10 @@ pipeline {
                 echo '========== DOCKER PUSH =========='
                 withCredentials([usernamePassword(credentialsId: 'docker-hub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
                     sh '''
-                        echo $DOCKER_PASS | sudo docker login -u $DOCKER_USER --password-stdin
-                        sudo docker push ${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}
-                        sudo docker push ${DOCKER_IMAGE_NAME}:latest
-                        sudo docker logout
+                        echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
+                        docker push ${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}
+                        docker push ${DOCKER_IMAGE_NAME}:latest
+                        docker logout
                     '''
                 }
             }
