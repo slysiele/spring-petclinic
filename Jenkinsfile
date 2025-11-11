@@ -1,10 +1,5 @@
 pipeline {
-
-    agent {
-        kubernetes {
-            label 'docker-build'
-        }
-    }
+    agent any
 
     environment {
         DOCKER_IMAGE_NAME = 'silvestor/petclinic'
@@ -13,7 +8,6 @@ pipeline {
     }
 
     stages {
-
         stage('Checkout') {
             steps {
                 echo '========== CHECKOUT =========='
@@ -21,9 +15,9 @@ pipeline {
             }
         }
 
-        stage('Build JAR') {
+        stage('Build') {
             steps {
-                echo '========== MAVEN BUILD =========='
+                echo '========== BUILD =========='
                 sh './mvnw clean package -DskipTests -Denforcer.skip=true'
             }
         }
@@ -31,10 +25,10 @@ pipeline {
         stage('Build Docker Image') {
             steps {
                 echo '========== DOCKER BUILD =========='
-                sh """
-            docker build -t ${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG} .
-            docker tag ${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG} ${DOCKER_IMAGE_NAME}:latest
-        """
+                sh '''
+                    sudo docker build -t ${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG} .
+                    sudo docker tag ${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG} ${DOCKER_IMAGE_NAME}:latest
+                '''
             }
         }
 
@@ -42,31 +36,36 @@ pipeline {
             steps {
                 echo '========== DOCKER PUSH =========='
                 withCredentials([usernamePassword(credentialsId: 'docker-hub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
-                    sh """
-              echo \$DOCKER_PASS | docker login -u \$DOCKER_USER --password-stdin
-              docker push ${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}
-              docker push ${DOCKER_IMAGE_NAME}:latest
-          """
+                    sh '''
+                        echo $DOCKER_PASS | sudo docker login -u $DOCKER_USER --password-stdin
+                        sudo docker push ${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}
+                        sudo docker push ${DOCKER_IMAGE_NAME}:latest
+                        sudo docker logout
+                    '''
                 }
             }
         }
 
         stage('Deploy to Kubernetes') {
             steps {
-                echo '========== K8S DEPLOY =========='
-                sh """
-          kubectl create namespace petclinic --dry-run=client -o yaml | kubectl apply -f -
-          sed -i "s|silvestor/petclinic:.*|silvestor/petclinic:${DOCKER_IMAGE_TAG}|g" k8s/deployment.yaml
-          kubectl apply -f k8s/deployment.yaml
-          kubectl apply -f k8s/service.yaml
-          kubectl rollout status deployment/petclinic -n petclinic --timeout=5m
-        """
+                echo '========== KUBERNETES DEPLOY =========='
+                sh '''
+                    kubectl create namespace petclinic --dry-run=client -o yaml | kubectl apply -f -
+                    sed -i "s|silvestor/petclinic:.*|silvestor/petclinic:${DOCKER_IMAGE_TAG}|g" k8s/deployment.yaml
+                    kubectl apply -f k8s/deployment.yaml
+                    kubectl apply -f k8s/service.yaml
+                    kubectl rollout status deployment/petclinic -n petclinic --timeout=5m
+                '''
             }
         }
     }
 
     post {
-        success { echo 'Pipeline Completed Successfully!' }
-        failure { echo 'Pipeline Failed!' }
+        success {
+            echo '✓ Pipeline succeeded!'
+        }
+        failure {
+            echo '✗ Pipeline failed!'
+        }
     }
 }
