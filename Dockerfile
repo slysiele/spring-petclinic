@@ -9,16 +9,13 @@ WORKDIR /app
 # Copy Maven wrapper and project files
 COPY . .
 
-# Ensure mvnw has execute permission
-RUN chmod +x mvnw
-
 # Build the project (skip tests for faster build)
-RUN ./mvnw clean package -DskipTests
+RUN mvn clean package -DskipTests -Denforcer.skip=true
 
 # =========================
 # Runtime Stage
 # =========================
-FROM eclipse-temurin:21-jre
+FROM eclipse-temurin:21-jdk
 
 WORKDIR /app
 

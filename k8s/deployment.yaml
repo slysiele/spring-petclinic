@@ -3,8 +3,15 @@ kind: Deployment
 metadata:
   name: petclinic
   namespace: petclinic
+  labels:
+    app: petclinic
 spec:
-  replicas: 1
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
   selector:
     matchLabels:
       app: petclinic
@@ -16,5 +23,26 @@ spec:
       containers:
         - name: petclinic
           image: silvestor/petclinic:latest
+          imagePullPolicy: Always
           ports:
             - containerPort: 8080
+              name: http
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 20
+            periodSeconds: 5
