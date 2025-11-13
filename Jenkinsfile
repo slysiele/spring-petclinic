@@ -147,10 +147,10 @@ K8S
 
     post {
         success {
-            sh 'echo "✅ SUCCESS! Access app at http://10.0.2.15:30081"'
+            sh 'echo " SUCCESS! Access app at the service endpoint"'
         }
         failure {
-            sh 'echo "❌ FAILED - Check logs above"'
+            sh 'echo " FAILED - Check logs above"'
         }
     }
 }
