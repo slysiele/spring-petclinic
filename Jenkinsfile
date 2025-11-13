@@ -32,95 +32,71 @@ pipeline {
                 echo '========== DEPLOY TO KUBERNETES =========='
                 sh '''
                     cd /tmp/spring-petclinic
-                    
-                    # Create namespace
-                    kubectl create namespace petclinic --dry-run=client -o yaml | kubectl apply -f -
-                    
-                    # Copy JAR to a shared location
+            
                     JAR_FILE=$(ls target/spring-petclinic*.jar | head -1)
                     echo "JAR file: $JAR_FILE"
                     
-                    # Create ConfigMap with JAR
+                    kubectl create namespace petclinic --dry-run=client -o yaml | kubectl apply -f -
                     kubectl create configmap petclinic-app --from-file=$JAR_FILE \
                       -n petclinic --dry-run=client -o yaml | kubectl apply -f -
-                    
-                    # Deploy
+            
                     kubectl apply -f - <<'K8S'
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: petclinic
-  namespace: petclinic
-spec:
-  replicas: 2
-  strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxSurge: 1
-      maxUnavailable: 0
-  selector:
-    matchLabels:
-      app: petclinic
-  template:
-    metadata:
-      labels:
-        app: petclinic
-    spec:
-      containers:
-      - name: petclinic
-        image: eclipse-temurin:21-jdk-alpine
-        command:
-          - sh
-          - -c
-          - "ls /app && java -jar /app/*.jar"
-        ports:
-        - containerPort: 8080
-        volumeMounts:
-        - name: app-jar
-          mountPath: /app
-        resources:
-          requests:
-            memory: "512Mi"
-            cpu: "500m"
-          limits:
-            memory: "1Gi"
-            cpu: "1000m"
-        livenessProbe:
-          httpGet:
-            path: /
-            port: 8080
-          initialDelaySeconds: 60
-          periodSeconds: 10
-          failureThreshold: 3
-        readinessProbe:
-          httpGet:
-            path: /
-            port: 8080
-          initialDelaySeconds: 30
-          periodSeconds: 5
-      volumes:
-      - name: app-jar
-        configMap:
-          name: petclinic-app
-          defaultMode: 0755
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: petclinic
-  namespace: petclinic
-spec:
-  type: NodePort
-  selector:
-    app: petclinic
-  ports:
-  - port: 8080
-    targetPort: 8080
-    nodePort: 30081
-    protocol: TCP
-K8S
-
-                    echo "Deployment created"
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: petclinic
+          namespace: petclinic
+        spec:
+          replicas: 2
+          selector:
+            matchLabels:
+              app: petclinic
+          template:
+            metadata:
+              labels:
+                app: petclinic
+            spec:
+              containers:
+              - name: petclinic
+                image: eclipse-temurin:21-jdk-alpine
+                command:
+                  - sh
+                  - -c
+                  - "java -jar /app/*.jar"
+                ports:
+                - containerPort: 8080
+                volumeMounts:
+                - name: app-jar
+                  mountPath: /app
+                resources:
+                  requests:
+                    memory: "512Mi"
+                    cpu: "500m"
+                  limits:
+                    memory: "1Gi"
+                    cpu: "1000m"
+              volumes:
+              - name: app-jar
+                configMap:
+                  name: petclinic-app
+        ---
+        apiVersion: v1
+        kind: Service
+        metadata:
+          name: petclinic
+          namespace: petclinic
+        spec:
+          type: NodePort
+          selector:
+            app: petclinic
+          ports:
+          - port: 8080
+            targetPort: 8080
+            nodePort: 30081
+        K8S
+        
+                    kubectl get pods -n petclinic
+                    kubectl get svc -n petclinic
                 '''
             }
         }
