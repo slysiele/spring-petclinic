@@ -42,21 +42,69 @@ pipeline {
             }
         }
 
+        stage('Copy JAR to Host') {
+            steps {
+                echo '========== COPY JAR TO SHARED LOCATION =========='
+                sh '''
+                    cd /tmp/spring-petclinic
+                    JAR_FILE=$(ls target/spring-petclinic*.jar | head -1)
+                    
+                    # Copy to a shared location on master
+                    mkdir -p /tmp/petclinic-artifacts
+                    cp $JAR_FILE /tmp/petclinic-artifacts/app.jar
+                    
+                    echo "JAR copied to /tmp/petclinic-artifacts/app.jar"
+                    ls -lah /tmp/petclinic-artifacts/
+                '''
+            }
+        }
+
         stage('Deploy to Kubernetes') {
             steps {
                 echo '========== DEPLOY TO KUBERNETES =========='
                 sh '''
                     export PATH=$HOME/bin:$PATH
-                    cd /tmp/spring-petclinic
-            
-                    JAR_FILE=$(ls target/spring-petclinic*.jar | head -1)
-                    echo "JAR file: $JAR_FILE"
                     
+                    # Create namespace
                     $HOME/bin/kubectl create namespace petclinic --dry-run=client -o yaml | $HOME/bin/kubectl apply -f -
-                    $HOME/bin/kubectl create configmap petclinic-app --from-file=$JAR_FILE \
-                      -n petclinic --dry-run=client -o yaml | $HOME/bin/kubectl apply -f -
-            
-                    $HOME/bin/kubectl apply -f - <<'K8S'
+                    
+                    # Create PersistentVolume for JAR storage
+                    $HOME/bin/kubectl apply -f - <<'PV'
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: petclinic-jar-pv
+spec:
+  capacity:
+    storage: 100Gi
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  hostPath:
+    path: /tmp/petclinic-artifacts
+PV
+
+                    # Create PersistentVolumeClaim
+                    $HOME/bin/kubectl apply -f - <<'PVC'
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: petclinic-jar-pvc
+  namespace: petclinic
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 100Gi
+PVC
+
+                    # Wait for PVC to be bound
+                    echo "Waiting for PVC to bind..."
+                    sleep 5
+                    
+                    # Create Deployment
+                    $HOME/bin/kubectl apply -f - <<'DEPLOY'
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -83,7 +131,7 @@ spec:
         command:
           - sh
           - -c
-          - "java -jar /app/*.jar"
+          - "java -jar /app/app.jar"
         ports:
         - containerPort: 8080
         volumeMounts:
@@ -110,8 +158,8 @@ spec:
           periodSeconds: 5
       volumes:
       - name: app-jar
-        configMap:
-          name: petclinic-app
+        persistentVolumeClaim:
+          claimName: petclinic-jar-pvc
 ---
 apiVersion: v1
 kind: Service
@@ -126,7 +174,7 @@ spec:
   - port: 8080
     targetPort: 8080
     nodePort: 30081
-K8S
+DEPLOY
         
                     $HOME/bin/kubectl get pods -n petclinic
                     $HOME/bin/kubectl get svc -n petclinic
@@ -146,11 +194,12 @@ K8S
                     echo "Services:"
                     $HOME/bin/kubectl get svc -n petclinic
                     
-                    echo "Waiting for pods to be ready..."
+                    echo "Waiting for pods to be ready (this may take 2-3 minutes)..."
                     $HOME/bin/kubectl wait --for=condition=ready pod -l app=petclinic -n petclinic --timeout=300s || true
                     
                     echo "Final status:"
                     $HOME/bin/kubectl get pods -n petclinic -o wide
+                    $HOME/bin/kubectl get pvc -n petclinic
                 '''
             }
         }
@@ -158,7 +207,7 @@ K8S
 
     post {
         success {
-            sh 'echo " SUCCESS! Access app at browser"'
+            sh 'echo " SUCCESS! Application deployed and running"'
         }
         failure {
             sh 'echo " FAILED - Check logs above"'
