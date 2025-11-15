@@ -1,6 +1,11 @@
 pipeline {
     agent any
 
+    environment {
+        DOCKER_IMAGE = 'silvestor/petclinic'
+        BUILD_TAG = "${BUILD_NUMBER}"
+    }
+
     stages {
         stage('Checkout') {
             steps {
@@ -15,7 +20,7 @@ pipeline {
             }
         }
 
-        stage('Build') {
+        stage('Build Application') {
             steps {
                 echo '========== BUILD APPLICATION =========='
                 sh '''
@@ -27,43 +32,35 @@ pipeline {
             }
         }
 
-        stage('Install kubectl') {
+        stage('Build Docker Image') {
             steps {
-                echo '========== INSTALL KUBECTL =========='
+                echo '========== BUILD DOCKER IMAGE =========='
                 sh '''
-                    echo "Installing kubectl..."
-                    curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-                    chmod +x kubectl
-                    mkdir -p $HOME/bin
-                    mv kubectl $HOME/bin/
-                    export PATH=$HOME/bin:$PATH
-                    $HOME/bin/kubectl version --client
+                    cd /tmp/spring-petclinic
+                    
+                    # Build the Docker image using host docker
+                    docker build -t ${DOCKER_IMAGE}:${BUILD_TAG} .
+                    docker tag ${DOCKER_IMAGE}:${BUILD_TAG} ${DOCKER_IMAGE}:latest
+                    
+                    # List images
+                    docker images | grep petclinic
                 '''
             }
         }
 
-        stage('Copy JAR to Host') {
+        stage('Install kubectl') {
             steps {
-                echo '========== COPY JAR TO SHARED LOCATION =========='
+                echo '========== INSTALL KUBECTL =========='
                 sh '''
-                    # Create shared directory
-                    mkdir -p /tmp/petclinic-artifacts
-                    chmod 777 /tmp/petclinic-artifacts
-                    
-                    # Find and copy the JAR
-                    JAR_FILE=$(find /tmp/spring-petclinic -name "spring-petclinic*.jar" -type f 2>/dev/null | head -1)
-                    
-                    if [ -z "$JAR_FILE" ]; then
-                        echo "ERROR: JAR not found!"
-                        ls -la /tmp/spring-petclinic/target/ || true
-                        exit 1
+                    if ! command -v kubectl &> /dev/null; then
+                        echo "Installing kubectl..."
+                        curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+                        chmod +x kubectl
+                        mkdir -p $HOME/bin
+                        mv kubectl $HOME/bin/
                     fi
                     
-                    echo "Found JAR: $JAR_FILE"
-                    cp "$JAR_FILE" /tmp/petclinic-artifacts/app.jar
-                    
-                    echo "JAR copied successfully"
-                    ls -lah /tmp/petclinic-artifacts/app.jar
+                    $HOME/bin/kubectl version --client
                 '''
             }
         }
@@ -75,45 +72,10 @@ pipeline {
                     export PATH=$HOME/bin:$PATH
                     
                     # Create namespace
-                    $HOME/bin/kubectl create namespace petclinic --dry-run=client -o yaml | $HOME/bin/kubectl apply -f -
+                    kubectl create namespace petclinic --dry-run=client -o yaml | kubectl apply -f -
                     
-                    # Create PersistentVolume for JAR storage
-                    $HOME/bin/kubectl apply -f - <<'PV'
-apiVersion: v1
-kind: PersistentVolume
-metadata:
-  name: petclinic-jar-pv
-spec:
-  capacity:
-    storage: 100Gi
-  accessModes:
-    - ReadWriteMany
-  persistentVolumeReclaimPolicy: Retain
-  hostPath:
-    path: /tmp/petclinic-artifacts
-PV
-
-                    # Create PersistentVolumeClaim
-                    $HOME/bin/kubectl apply -f - <<'PVC'
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: petclinic-jar-pvc
-  namespace: petclinic
-spec:
-  accessModes:
-    - ReadWriteMany
-  resources:
-    requests:
-      storage: 100Gi
-PVC
-
-                    # Wait for PVC to be bound
-                    echo "Waiting for PVC to bind..."
-                    sleep 5
-                    
-                    # Create Deployment
-                    $HOME/bin/kubectl apply -f - <<'DEPLOY'
+                    # Deploy using the Docker image
+                    kubectl apply -f - <<'DEPLOY'
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -136,16 +98,10 @@ spec:
     spec:
       containers:
       - name: petclinic
-        image: eclipse-temurin:21-jdk-alpine
-        command:
-          - sh
-          - -c
-          - "java -jar /app/app.jar"
+        image: silvestor/petclinic:latest
+        imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8080
-        volumeMounts:
-        - name: app-jar
-          mountPath: /app
         resources:
           requests:
             memory: "512Mi"
@@ -165,10 +121,6 @@ spec:
             port: 8080
           initialDelaySeconds: 30
           periodSeconds: 5
-      volumes:
-      - name: app-jar
-        persistentVolumeClaim:
-          claimName: petclinic-jar-pvc
 ---
 apiVersion: v1
 kind: Service
@@ -185,30 +137,24 @@ spec:
     nodePort: 30081
 DEPLOY
         
-                    $HOME/bin/kubectl get pods -n petclinic
-                    $HOME/bin/kubectl get svc -n petclinic
+                    kubectl get pods -n petclinic
+                    kubectl get svc -n petclinic
                 '''
             }
         }
 
-        stage('Verify') {
+        stage('Verify Deployment') {
             steps {
                 echo '========== VERIFY DEPLOYMENT =========='
                 sh '''
                     export PATH=$HOME/bin:$PATH
                     
-                    echo "Pods:"
-                    $HOME/bin/kubectl get pods -n petclinic
-                    
-                    echo "Services:"
-                    $HOME/bin/kubectl get svc -n petclinic
-                    
                     echo "Waiting for pods to be ready (this may take 2-3 minutes)..."
-                    $HOME/bin/kubectl wait --for=condition=ready pod -l app=petclinic -n petclinic --timeout=300s || true
+                    kubectl wait --for=condition=ready pod -l app=petclinic -n petclinic --timeout=300s || true
                     
                     echo "Final status:"
-                    $HOME/bin/kubectl get pods -n petclinic -o wide
-                    $HOME/bin/kubectl get pvc -n petclinic
+                    kubectl get pods -n petclinic -o wide
+                    kubectl get svc -n petclinic
                 '''
             }
         }
@@ -216,7 +162,7 @@ DEPLOY
 
     post {
         success {
-            sh 'echo " SUCCESS! Application deployed and running"'
+            sh 'echo " SUCCESS! Access app on browser"'
         }
         failure {
             sh 'echo " FAILED - Check logs above"'
