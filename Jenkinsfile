@@ -46,15 +46,24 @@ pipeline {
             steps {
                 echo '========== COPY JAR TO SHARED LOCATION =========='
                 sh '''
-                    cd /tmp/spring-petclinic
-                    JAR_FILE=$(ls target/spring-petclinic*.jar | head -1)
-                    
-                    # Copy to a shared location on master
+                    # Create shared directory
                     mkdir -p /tmp/petclinic-artifacts
-                    cp $JAR_FILE /tmp/petclinic-artifacts/app.jar
+                    chmod 777 /tmp/petclinic-artifacts
                     
-                    echo "JAR copied to /tmp/petclinic-artifacts/app.jar"
-                    ls -lah /tmp/petclinic-artifacts/
+                    # Find and copy the JAR
+                    JAR_FILE=$(find /tmp/spring-petclinic -name "spring-petclinic*.jar" -type f 2>/dev/null | head -1)
+                    
+                    if [ -z "$JAR_FILE" ]; then
+                        echo "ERROR: JAR not found!"
+                        ls -la /tmp/spring-petclinic/target/ || true
+                        exit 1
+                    fi
+                    
+                    echo "Found JAR: $JAR_FILE"
+                    cp "$JAR_FILE" /tmp/petclinic-artifacts/app.jar
+                    
+                    echo "JAR copied successfully"
+                    ls -lah /tmp/petclinic-artifacts/app.jar
                 '''
             }
         }
