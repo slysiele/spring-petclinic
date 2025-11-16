@@ -1,53 +1,131 @@
 pipeline {
-    agent any
+    agent {
+        kubernetes {
+            yaml '''
+        apiVersion: v1
+        kind: Pod
+        metadata:
+          labels:
+            app: petclinic-builder
+        spec:
+          serviceAccountName: jenkins
+          containers:
+          - name: maven
+            image: maven:3.9-eclipse-temurin-21
+            command:
+            - cat
+            tty: true
+            volumeMounts:
+            - mountPath: "/root/.m2/repository"
+              name: maven-cache
+          - name: git
+            image: bitnami/git:latest
+            command:
+            - cat
+            tty: true
+          - name: kaniko
+            image: gcr.io/kaniko-project/executor:debug
+            command: ["/busybox/cat"]
+            tty: true
+            volumeMounts:
+            - name: docker-config
+              mountPath: /kaniko/.docker
+          - name: sonarcli
+            image: sonarsource/sonar-scanner-cli:latest
+            command:
+            - cat
+            tty: true
+          - name: kubectl
+            image: bitnami/kubectl:latest
+            command:
+            - cat
+            tty: true
+          volumes:
+          - name: maven-cache
+            persistentVolumeClaim:
+              claimName: maven-cache
+          - name: docker-config
+            secret:
+              secretName: docker-credentials
+              items:
+              - key: .dockerconfigjson
+                path: config.json
+      '''
+        }
+    }
 
     environment {
-        DOCKER_IMAGE = 'silvestor/petclinic'
-        BUILD_TAG = "${BUILD_NUMBER}"
+        DOCKER_USERNAME = "silvestor"
+        APP_NAME = "petclinic"
+        IMAGE_NAME = "${DOCKER_USERNAME}/${APP_NAME}"
+        IMAGE_TAG = "${BUILD_NUMBER}"
+        SONARQUBE_URL = "http://sonarqube.sonarqube.svc.cluster.local:9000"
     }
 
     stages {
-        stage('Checkout') {
+        stage('Checkout Code') {
             steps {
-                echo '========== CHECKOUT CODE =========='
-                sh 'rm -rf .git'
-                git branch: 'main', url: 'https://github.com/slysiele/spring-petclinic.git'
-                sh 'ls -la'
+                container('git') {
+                    echo '========== CHECKOUT CODE =========='
+                    git url: 'https://github.com/slysiele/spring-petclinic',
+                            branch: 'main'
+                    sh 'ls -la'
+                }
             }
         }
 
-        stage('Build') {
+        stage('Build Application') {
             steps {
-                echo '========== BUILD APPLICATION =========='
-                sh './mvnw clean package -DskipTests -Denforcer.skip=true'
-                sh 'ls -lah target/*.jar'
+                container('maven') {
+                    echo '========== BUILD APPLICATION =========='
+                    sh 'mvn clean package -DskipTests -Denforcer.skip=true'
+                    sh 'ls -lah target/*.jar'
+                }
             }
         }
 
-        stage('Build Docker Image') {
+        stage('Run Tests') {
             steps {
-                echo '========== BUILD DOCKER IMAGE =========='
-                sh '''
-                    docker build -t ${DOCKER_IMAGE}:${BUILD_TAG} .
-                    docker tag ${DOCKER_IMAGE}:${BUILD_TAG} ${DOCKER_IMAGE}:latest
-                    docker images | grep petclinic
-                '''
+                container('maven') {
+                    echo '========== RUN UNIT TESTS =========='
+                    sh 'mvn test'
+                }
             }
         }
 
-        stage('Push to Docker Hub') {
+        stage('SonarQube Analysis') {
             steps {
-                echo '========== PUSH TO DOCKER HUB =========='
-                withCredentials([usernamePassword(
-                        credentialsId: 'docker-hub-creds',
-                        usernameVariable: 'DOCKER_USER',
-                        passwordVariable: 'DOCKER_PASS'
-                )]) {
+                container('sonarcli') {
+                    echo '========== SONARQUBE CODE ANALYSIS =========='
+                    withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
+                        sh '''
+                            /opt/sonar-scanner/bin/sonar-scanner \
+                              -Dsonar.projectKey=petclinic \
+                              -Dsonar.projectName=petclinic \
+                              -Dsonar.projectVersion=1.0 \
+                              -Dsonar.sources=src/main \
+                              -Dsonar.tests=src/test \
+                              -Dsonar.java.binaries=target/classes \
+                              -Dsonar.host.url=${SONARQUBE_URL} \
+                              -Dsonar.login=${SONAR_TOKEN} \
+                              -Dsonar.language=java
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Build and Push Docker Image') {
+            steps {
+                container('kaniko') {
+                    echo '========== BUILD DOCKER IMAGE =========='
                     sh '''
-                        echo "${DOCKER_PASS}" | docker login -u "${DOCKER_USER}" --password-stdin
-                        docker push ${DOCKER_IMAGE}:${BUILD_TAG}
-                        docker push ${DOCKER_IMAGE}:latest
-                        docker logout
+                        /kaniko/executor \
+                          --context=${WORKSPACE} \
+                          --dockerfile=Dockerfile \
+                          --destination=${IMAGE_NAME}:${IMAGE_TAG} \
+                          --destination=${IMAGE_NAME}:latest \
+                          --cache=true
                     '''
                 }
             }
@@ -55,26 +133,30 @@ pipeline {
 
         stage('Deploy to Kubernetes') {
             steps {
-                echo '========== DEPLOY TO KUBERNETES =========='
-                sh '''
-                    kubectl create namespace petclinic --dry-run=client -o yaml | kubectl apply -f -
-                    kubectl apply -f k8s/deployment.yaml
-                    kubectl apply -f k8s/service.yaml
-                    kubectl get pods -n petclinic
-                    kubectl get svc -n petclinic
-                '''
+                container('kubectl') {
+                    echo '========== DEPLOY TO KUBERNETES =========='
+                    sh '''
+                        kubectl create namespace petclinic --dry-run=client -o yaml | kubectl apply -f -
+                        kubectl apply -f k8s/deployment.yaml
+                        kubectl apply -f k8s/service.yaml
+                        kubectl get pods -n petclinic
+                        kubectl get svc -n petclinic
+                    '''
+                }
             }
         }
 
         stage('Verify Deployment') {
             steps {
-                echo '========== VERIFY DEPLOYMENT =========='
-                sh '''
-                    echo "Waiting for rollout..."
-                    kubectl rollout status deployment/petclinic -n petclinic --timeout=5m
-                    echo "Final status:"
-                    kubectl get pods -n petclinic -o wide
-                '''
+                container('kubectl') {
+                    echo '========== VERIFY DEPLOYMENT =========='
+                    sh '''
+                        echo "Waiting for rollout..."
+                        kubectl rollout status deployment/petclinic -n petclinic --timeout=5m
+                        echo "Final pod status:"
+                        kubectl get pods -n petclinic -o wide
+                    '''
+                }
             }
         }
     }
@@ -82,6 +164,9 @@ pipeline {
     post {
         success {
             echo ' Pipeline succeeded! Application deployed successfully'
+            echo "Docker Image: ${IMAGE_NAME}:${IMAGE_TAG}"
+            echo "SonarQube Dashboard: ${SONARQUBE_URL}/dashboard?id=petclinic"
+            echo "Application: http://<MASTER_IP>:30081"
         }
         failure {
             echo ' Pipeline failed! Check logs above'
