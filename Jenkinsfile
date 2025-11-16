@@ -81,10 +81,10 @@ pipeline {
 
     post {
         success {
-            echo ' Pipeline succeeded!'
+            echo ' Pipeline succeeded! Application deployed successfully'
         }
         failure {
-            echo ' Pipeline failed!'
+            echo ' Pipeline failed! Check logs above'
         }
     }
 }
