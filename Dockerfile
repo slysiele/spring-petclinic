@@ -20,9 +20,9 @@ FROM eclipse-temurin:21-jdk
 WORKDIR /app
 
 # Copy the packaged jar from the builder stage
-COPY --from=builder /app/target/spring-petclinic-*.jar app.jar
+COPY --from=builder /app/target/*.jar app.jar
 
 EXPOSE 8080
 
-ENTRYPOINT ["java", "-jar", "app.jar"]
+CMD ["java", "-jar", "app.jar"]
 
