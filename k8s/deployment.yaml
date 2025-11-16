@@ -21,7 +21,7 @@ spec:
       containers:
         - name: petclinic
           image: silvestor/petclinic:latest
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           ports:
             - containerPort: 8080
           resources:
