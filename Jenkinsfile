@@ -10,7 +10,7 @@ pipeline {
         stage('Checkout') {
             steps {
                 echo '========== CHECKOUT CODE =========='
-                cleanWs()
+                sh 'rm -rf .git'
                 git branch: 'main', url: 'https://github.com/slysiele/spring-petclinic.git'
                 sh 'ls -la'
             }
@@ -81,10 +81,10 @@ pipeline {
 
     post {
         success {
-            echo ' Pipeline succeeded!'
+            echo ' Pipeline succeeded! Application deployed successfully'
         }
         failure {
-            echo ' Pipeline failed!'
+            echo ' Pipeline failed! Check logs above'
         }
     }
 }
