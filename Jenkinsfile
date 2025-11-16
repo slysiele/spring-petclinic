@@ -30,11 +30,6 @@ pipeline {
             volumeMounts:
             - name: docker-config
               mountPath: /kaniko/.docker
-          - name: sonarcli
-            image: sonarsource/sonar-scanner-cli:latest
-            command:
-            - cat
-            tty: true
           - name: kubectl
             image: bitnami/kubectl:latest
             command:
@@ -59,7 +54,6 @@ pipeline {
         APP_NAME = "petclinic"
         IMAGE_NAME = "${DOCKER_USERNAME}/${APP_NAME}"
         IMAGE_TAG = "${BUILD_NUMBER}"
-        SONARQUBE_URL = "http://sonarqube.sonarqube.svc.cluster.local:9000"
     }
 
     stages {
@@ -89,28 +83,6 @@ pipeline {
                 container('maven') {
                     echo '========== RUN UNIT TESTS =========='
                     sh 'mvn test'
-                }
-            }
-        }
-
-        stage('SonarQube Analysis') {
-            steps {
-                container('sonarcli') {
-                    echo '========== SONARQUBE CODE ANALYSIS =========='
-                    withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
-                        sh '''
-                            /opt/sonar-scanner/bin/sonar-scanner \
-                              -Dsonar.projectKey=petclinic \
-                              -Dsonar.projectName=petclinic \
-                              -Dsonar.projectVersion=1.0 \
-                              -Dsonar.sources=src/main \
-                              -Dsonar.tests=src/test \
-                              -Dsonar.java.binaries=target/classes \
-                              -Dsonar.host.url=${SONARQUBE_URL} \
-                              -Dsonar.login=${SONAR_TOKEN} \
-                              -Dsonar.language=java
-                        '''
-                    }
                 }
             }
         }
@@ -165,7 +137,6 @@ pipeline {
         success {
             echo ' Pipeline succeeded! Application deployed successfully'
             echo "Docker Image: ${IMAGE_NAME}:${IMAGE_TAG}"
-            echo "SonarQube Dashboard: ${SONARQUBE_URL}/dashboard?id=petclinic"
             echo "Application: http://<MASTER_IP>:30081"
         }
         failure {
