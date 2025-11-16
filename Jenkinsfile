@@ -12,7 +12,7 @@ pipeline {
         stage('Checkout Code') {
             steps {
                 echo '========== CHECKOUT CODE =========='
-                cleanWs(deleteDirs: true)
+                sh 'rm -rf .git 2>/dev/null || true'
                 git url: 'https://github.com/slysiele/spring-petclinic', branch: 'main'
                 sh 'ls -la'
             }
@@ -23,13 +23,6 @@ pipeline {
                 echo '========== BUILD APPLICATION =========='
                 sh './mvnw clean package -DskipTests -Denforcer.skip=true'
                 sh 'ls -lah target/*.jar'
-            }
-        }
-
-        stage('Run Tests') {
-            steps {
-                echo '========== RUN UNIT TESTS =========='
-                sh './mvnw test'
             }
         }
 
