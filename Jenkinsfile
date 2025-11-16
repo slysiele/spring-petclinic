@@ -1,53 +1,5 @@
 pipeline {
-    agent {
-        kubernetes {
-            yaml '''
-        apiVersion: v1
-        kind: Pod
-        metadata:
-          labels:
-            app: petclinic-builder
-        spec:
-          serviceAccountName: jenkins
-          containers:
-          - name: maven
-            image: maven:3.9-eclipse-temurin-21
-            command:
-            - cat
-            tty: true
-            volumeMounts:
-            - mountPath: "/root/.m2/repository"
-              name: maven-cache
-          - name: git
-            image: bitnami/git:latest
-            command:
-            - cat
-            tty: true
-          - name: kaniko
-            image: gcr.io/kaniko-project/executor:debug
-            command: ["/busybox/cat"]
-            tty: true
-            volumeMounts:
-            - name: docker-config
-              mountPath: /kaniko/.docker
-          - name: kubectl
-            image: bitnami/kubectl:latest
-            command:
-            - cat
-            tty: true
-          volumes:
-          - name: maven-cache
-            persistentVolumeClaim:
-              claimName: maven-cache
-          - name: docker-config
-            secret:
-              secretName: docker-credentials
-              items:
-              - key: .dockerconfigjson
-                path: config.json
-      '''
-        }
-    }
+    agent any
 
     environment {
         DOCKER_USERNAME = "silvestor"
@@ -59,45 +11,48 @@ pipeline {
     stages {
         stage('Checkout Code') {
             steps {
-                container('git') {
-                    echo '========== CHECKOUT CODE =========='
-                    git url: 'https://github.com/slysiele/spring-petclinic',
-                            branch: 'main'
-                    sh 'ls -la'
-                }
+                echo '========== CHECKOUT CODE =========='
+                cleanWs(deleteDirs: true)
+                git url: 'https://github.com/slysiele/spring-petclinic', branch: 'main'
+                sh 'ls -la'
             }
         }
 
         stage('Build Application') {
             steps {
-                container('maven') {
-                    echo '========== BUILD APPLICATION =========='
-                    sh 'mvn clean package -DskipTests -Denforcer.skip=true'
-                    sh 'ls -lah target/*.jar'
-                }
+                echo '========== BUILD APPLICATION =========='
+                sh './mvnw clean package -DskipTests -Denforcer.skip=true'
+                sh 'ls -lah target/*.jar'
             }
         }
 
         stage('Run Tests') {
             steps {
-                container('maven') {
-                    echo '========== RUN UNIT TESTS =========='
-                    sh 'mvn test'
-                }
+                echo '========== RUN UNIT TESTS =========='
+                sh './mvnw test'
             }
         }
 
         stage('Build and Push Docker Image') {
             steps {
-                container('kaniko') {
-                    echo '========== BUILD DOCKER IMAGE =========='
+                echo '========== BUILD DOCKER IMAGE =========='
+                sh '''
+                    docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
+                    docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${IMAGE_NAME}:latest
+                    docker images | grep petclinic
+                '''
+            }
+        }
+
+        stage('Push to Docker Hub') {
+            steps {
+                echo '========== PUSH TO DOCKER HUB =========='
+                withCredentials([usernamePassword(credentialsId: 'docker-hub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
                     sh '''
-                        /kaniko/executor \
-                          --context=${WORKSPACE} \
-                          --dockerfile=Dockerfile \
-                          --destination=${IMAGE_NAME}:${IMAGE_TAG} \
-                          --destination=${IMAGE_NAME}:latest \
-                          --cache=true
+                        echo "${DOCKER_PASS}" | docker login -u "${DOCKER_USER}" --password-stdin
+                        docker push ${IMAGE_NAME}:${IMAGE_TAG}
+                        docker push ${IMAGE_NAME}:latest
+                        docker logout
                     '''
                 }
             }
@@ -105,30 +60,26 @@ pipeline {
 
         stage('Deploy to Kubernetes') {
             steps {
-                container('kubectl') {
-                    echo '========== DEPLOY TO KUBERNETES =========='
-                    sh '''
-                        kubectl create namespace petclinic --dry-run=client -o yaml | kubectl apply -f -
-                        kubectl apply -f k8s/deployment.yaml
-                        kubectl apply -f k8s/service.yaml
-                        kubectl get pods -n petclinic
-                        kubectl get svc -n petclinic
-                    '''
-                }
+                echo '========== DEPLOY TO KUBERNETES =========='
+                sh '''
+                    kubectl create namespace petclinic --dry-run=client -o yaml | kubectl apply -f -
+                    kubectl apply -f k8s/deployment.yaml
+                    kubectl apply -f k8s/service.yaml
+                    kubectl get pods -n petclinic
+                    kubectl get svc -n petclinic
+                '''
             }
         }
 
         stage('Verify Deployment') {
             steps {
-                container('kubectl') {
-                    echo '========== VERIFY DEPLOYMENT =========='
-                    sh '''
-                        echo "Waiting for rollout..."
-                        kubectl rollout status deployment/petclinic -n petclinic --timeout=5m
-                        echo "Final pod status:"
-                        kubectl get pods -n petclinic -o wide
-                    '''
-                }
+                echo '========== VERIFY DEPLOYMENT =========='
+                sh '''
+                    echo "Waiting for rollout..."
+                    kubectl rollout status deployment/petclinic -n petclinic --timeout=5m
+                    echo "Final pod status:"
+                    kubectl get pods -n petclinic -o wide
+                '''
             }
         }
     }
