@@ -1,48 +1,128 @@
 pipeline {
-    agent any
+    agent {
+        kubernetes {
+            namespace 'default'
+            yaml '''
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    jenkins: agent
+spec:
+  serviceAccountName: jenkins
+  containers:
+  - name: maven
+    image: maven:3.9-eclipse-temurin-21
+    command:
+    - sleep
+    args:
+    - 99d
+    volumeMounts:
+    - name: maven-cache
+      mountPath: /root/.m2
+  - name: docker
+    image: docker:24-dind
+    securityContext:
+      privileged: true
+    volumeMounts:
+    - name: docker-sock
+      mountPath: /var/run
+  - name: kubectl
+    image: bitnami/kubectl:latest
+    command:
+    - sleep
+    args:
+    - 99d
+  volumes:
+  - name: maven-cache
+    emptyDir: {}
+  - name: docker-sock
+    emptyDir: {}
+'''
+        }
+    }
 
     environment {
-        DOCKER_USERNAME = "silvestor"
-        APP_NAME = "petclinic"
-        IMAGE_NAME = "${DOCKER_USERNAME}/${APP_NAME}"
-        IMAGE_TAG = "${BUILD_NUMBER}"
+        DOCKER_HUB_REPO = 'silvestor/petclinic'
+        DOCKER_CREDENTIALS_ID = 'docker-hub-creds'
+        GIT_COMMIT_SHORT = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
+        IMAGE_TAG = "${env.BUILD_NUMBER}-${GIT_COMMIT_SHORT}"
     }
 
     stages {
-
-        stage('Checkout Code') {
+        stage('Checkout') {
             steps {
-                echo '========== CHECKOUT CODE =========='
-                sh 'rm -rf .git 2>/dev/null || true'
-                git url: 'https://github.com/slysiele/spring-petclinic', branch: 'main'
-                sh 'ls -la'
+                checkout scm
+                script {
+                    echo "Building commit: ${GIT_COMMIT_SHORT}"
+                    echo "Image tag: ${IMAGE_TAG}"
+                }
             }
         }
 
         stage('Build Application') {
             steps {
-                echo '========== BUILD APPLICATION =========='
-                sh './mvnw clean package -DskipTests -Denforcer.skip=true'
-                sh 'ls -lah target/*.jar'
+                container('maven') {
+                    sh '''
+                        echo "========== BUILD APPLICATION =========="
+                        ./mvnw clean package -DskipTests -Denforcer.skip=true
+                    '''
+                }
             }
         }
 
-        stage('Build & Push Docker Image with Kaniko') {
+        stage('Run Tests') {
             steps {
-                echo '========== BUILD & PUSH IMAGE =========='
+                container('maven') {
+                    sh '''
+                        echo "========== RUN UNIT TESTS =========="
+                        ./mvnw test
+                    '''
+                }
+            }
+            post {
+                always {
+                    junit '**/target/surefire-reports/*.xml'
+                }
+            }
+        }
 
-                container('kaniko') {
+        stage('Static Analysis - SonarQube') {
+            steps {
+                container('maven') {
+                    script {
+                        echo "========== SONARQUBE ANALYSIS =========="
+                        echo "SonarQube analysis would run here (optional)"
+                    }
+                }
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                container('docker') {
+                    sh '''
+                        echo "========== BUILD DOCKER IMAGE =========="
+                        dockerd &
+                        sleep 10
+                        docker build -t ${DOCKER_HUB_REPO}:${IMAGE_TAG} .
+                        docker tag ${DOCKER_HUB_REPO}:${IMAGE_TAG} ${DOCKER_HUB_REPO}:latest
+                        docker images | grep petclinic
+                    '''
+                }
+            }
+        }
+
+        stage('Push to Docker Hub') {
+            steps {
+                container('docker') {
+                    echo '========== PUSH TO DOCKER HUB =========='
                     withCredentials([usernamePassword(credentialsId: 'docker-hub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
-
                         sh '''
-                        echo "{\"auths\":{\"https://index.docker.io/v1/\":{\"username\":\"$DOCKER_USER\",\"password\":\"$DOCKER_PASS\"}}}" \
-                        > /kaniko/.docker/config.json
-
-                        /kaniko/executor \
-                          --dockerfile=Dockerfile \
-                          --context=`pwd` \
-                          --destination=${IMAGE_NAME}:${IMAGE_TAG} \
-                          --destination=${IMAGE_NAME}:latest
+                            echo "${DOCKER_PASS}" | docker login -u "${DOCKER_USER}" --password-stdin
+                            docker push ${DOCKER_HUB_REPO}:${IMAGE_TAG}
+                            docker push ${DOCKER_HUB_REPO}:latest
+                            docker logout
                         '''
                     }
                 }
@@ -51,26 +131,31 @@ pipeline {
 
         stage('Deploy to Kubernetes') {
             steps {
-                echo '========== DEPLOY TO KUBERNETES =========='
-                sh '''
-                    kubectl create namespace petclinic --dry-run=client -o yaml | kubectl apply -f -
-                    kubectl apply -f k8s/deployment.yaml
-                    kubectl apply -f k8s/service.yaml
-                    kubectl get pods -n petclinic
-                    kubectl get svc -n petclinic
-                '''
+                container('kubectl') {
+                    echo '========== DEPLOY TO KUBERNETES =========='
+                    sh '''
+                        kubectl create namespace petclinic --dry-run=client -o yaml | kubectl apply -f -
+                        sed -i "s|image:.*|image: ${DOCKER_HUB_REPO}:${IMAGE_TAG}|g" k8s/deployment.yaml
+                        kubectl apply -f k8s/deployment.yaml
+                        kubectl apply -f k8s/service.yaml
+                        kubectl get pods -n petclinic
+                        kubectl get svc -n petclinic
+                    '''
+                }
             }
         }
 
         stage('Verify Deployment') {
             steps {
-                echo '========== VERIFY DEPLOYMENT =========='
-                sh '''
-                    echo "Waiting for rollout..."
-                    kubectl rollout status deployment/petclinic -n petclinic --timeout=5m
-                    echo "Final pod status:"
-                    kubectl get pods -n petclinic -o wide
-                '''
+                container('kubectl') {
+                    echo '========== VERIFY DEPLOYMENT =========='
+                    sh '''
+                        echo "Waiting for rollout..."
+                        kubectl rollout status deployment/petclinic -n petclinic --timeout=5m
+                        echo "Final pod status:"
+                        kubectl get pods -n petclinic -o wide
+                    '''
+                }
             }
         }
     }
@@ -78,8 +163,8 @@ pipeline {
     post {
         success {
             echo ' Pipeline succeeded! Application deployed successfully'
-            echo "Docker Image: ${IMAGE_NAME}:${IMAGE_TAG}"
-            echo "Application available on NodePort service."
+            echo "Docker Image: ${DOCKER_HUB_REPO}:${IMAGE_TAG}"
+            echo "Application: http://<MASTER_IP>:30081"
         }
         failure {
             echo ' Pipeline failed! Check logs above'
