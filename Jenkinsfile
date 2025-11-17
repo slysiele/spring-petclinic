@@ -9,6 +9,7 @@ pipeline {
     }
 
     stages {
+
         stage('Checkout Code') {
             steps {
                 echo '========== CHECKOUT CODE =========='
@@ -26,27 +27,24 @@ pipeline {
             }
         }
 
-        stage('Build and Push Docker Image') {
+        stage('Build & Push Docker Image with Kaniko') {
             steps {
-                echo '========== BUILD DOCKER IMAGE =========='
-                sh '''
-                    docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
-                    docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${IMAGE_NAME}:latest
-                    docker images | grep petclinic
-                '''
-            }
-        }
+                echo '========== BUILD & PUSH IMAGE =========='
 
-        stage('Push to Docker Hub') {
-            steps {
-                echo '========== PUSH TO DOCKER HUB =========='
-                withCredentials([usernamePassword(credentialsId: 'docker-hub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
-                    sh '''
-                        echo "${DOCKER_PASS}" | docker login -u "${DOCKER_USER}" --password-stdin
-                        docker push ${IMAGE_NAME}:${IMAGE_TAG}
-                        docker push ${IMAGE_NAME}:latest
-                        docker logout
-                    '''
+                container('kaniko') {
+                    withCredentials([usernamePassword(credentialsId: 'docker-hub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+
+                        sh '''
+                        echo "{\"auths\":{\"https://index.docker.io/v1/\":{\"username\":\"$DOCKER_USER\",\"password\":\"$DOCKER_PASS\"}}}" \
+                        > /kaniko/.docker/config.json
+
+                        /kaniko/executor \
+                          --dockerfile=Dockerfile \
+                          --context=`pwd` \
+                          --destination=${IMAGE_NAME}:${IMAGE_TAG} \
+                          --destination=${IMAGE_NAME}:latest
+                        '''
+                    }
                 }
             }
         }
@@ -81,7 +79,7 @@ pipeline {
         success {
             echo ' Pipeline succeeded! Application deployed successfully'
             echo "Docker Image: ${IMAGE_NAME}:${IMAGE_TAG}"
-            echo "Application: http://<MASTER_IP>:30081"
+            echo "Application available on NodePort service."
         }
         failure {
             echo ' Pipeline failed! Check logs above'
